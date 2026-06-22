@@ -61,7 +61,7 @@ class Table_CSV extends Widget_Base {
 			'csv_type',
 			[
 				'label'   => esc_html__( 'CSV Type', 'tablentor' ),
-				'type'    => Controls_Manager::HIDDEN,
+				'type'    => Controls_Manager::CHOOSE,
 				'options' => [
 					'text' => [
 						'title' => esc_html__( 'Text', 'tablentor' ),
@@ -94,11 +94,11 @@ class Table_CSV extends Widget_Base {
 		$this->add_control(
 			'csv_file',
 			[
-				'label'       => esc_html__( 'File Url', 'tablentor' ),
-				'type'        => Controls_Manager::URL,
-				'options'     => false,
+				'label'       => esc_html__( 'CSV File', 'tablentor' ),
+				'type'        => Control_Csv_Media::TYPE,
+				'media_types' => [ 'text/csv' ],
 				'label_block' => true,
-				'placeholder' => esc_html__( 'Paste your csv URL', 'tablentor' ),
+				'description' => esc_html__( 'Upload or select a CSV (.csv) file from the Media Library.', 'tablentor' ),
 				'condition'   => [
 					'csv_type' => 'file'
 				]
@@ -916,22 +916,30 @@ class Table_CSV extends Widget_Base {
 		if ( 'text' === $settings['csv_type'] ) {
 			$csv_text = $settings['csv_text'];
 		} else if ( 'file' === $settings['csv_type'] ) {
-			if ( ! empty( $settings['csv_file']['url'] ) ) {
-				$fileExtension = pathinfo($settings['csv_file']['url'], PATHINFO_EXTENSION );
-				if ( strtolower( $fileExtension) !== 'csv' ) {
+			// Only Media Library attachments are accepted (uploader-only control).
+			// Reading from the local attachment by ID — never fetching a remote
+			// URL — eliminates the SSRF / file:// vector entirely.
+			$attachment_id = isset( $settings['csv_file']['id'] ) ? absint( $settings['csv_file']['id'] ) : 0;
+
+			if ( $attachment_id ) {
+				$file_path = get_attached_file( $attachment_id );
+
+				if ( ! $file_path || ! file_exists( $file_path ) ) {
+					esc_html_e( 'Error: Unable to retrieve the CSV file.', 'tablentor' );
+					return;
+				}
+
+				if ( strtolower( pathinfo( $file_path, PATHINFO_EXTENSION ) ) !== 'csv' ) {
 					esc_html_e( 'Error: The file is not a CSV.', 'tablentor' );
 					return;
 				}
 
-				$csvContent = file_get_contents($settings['csv_file']['url'] );
+				$csv_text = file_get_contents( $file_path );
 
-				if ($csvContent === false) {
-					echo "Error: Unable to retrieve the CSV file.";
-					return [];
+				if ( false === $csv_text ) {
+					esc_html_e( 'Error: Unable to retrieve the CSV file.', 'tablentor' );
+					return;
 				}
-
-				// Split CSV content into rows by newline
-				$rows = preg_split('/\r\n|\n|\r/', trim($csvContent));
 			}
 		}
 
@@ -1006,20 +1014,24 @@ class Table_CSV extends Widget_Base {
 
 		echo "<tbody>";
 		$row_count = 0;
+		$tr_content = '';
 		foreach ( $rows as $key => $line ) {
 			if ( ! empty( trim( $line ) ) ) {
 				$columns = str_getcsv($line);
-				echo '<tr>';
-				foreach( $columns as $column ) {
-					echo "<td>" . $this->parse_text_editor( $column ) . "</td>";
+				$tr_content .= "<tr class=tablentor-csv-row-{$key}>";
+				foreach( $columns as $col_key => $column ) {
+					$tr_content .= "<td class=tablentor-csv-cell-{$key}-{$col_key}>" . $this->parse_text_editor( $column ) . "</td>";
 				}
-				echo '</tr>';
+				$tr_content .= '</tr>';
 			}
 
 			$row_count ++;
 			if ( $is_editor && $row_count > 12 ) {
 				break;
 			}
+		}
+		if( !empty( $tr_content ) ){
+			echo wp_kses_post( $tr_content );
 		}
 		echo "</tbody>";
 		echo "</table>";
